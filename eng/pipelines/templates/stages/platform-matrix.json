@@ -40,7 +40,7 @@
     },
     "filters": {
         "NoFooBar": {
-            "AdditionalTestFilters": "& TestCategory!=foobar"
+            "AdditionalTestFilters": "& (TestCategory!=FooBar)"
         }
     },
     "AdditionalTestArguments": [

@@ -39,5 +39,15 @@ namespace Azure.Template.Tests
 
             Assert.AreEqual("Very secret value", secret.Value.Value);
         }
+
+        [Category("FooBar")]
+        public async Task FooBar()
+        {
+            TemplateClient client = CreateClient();
+
+            Response<SecretBundle> secret = await client.GetSecretValueAsync("TestSecret");
+
+            Assert.AreEqual("Very secret value", secret.Value.Value);
+        }
     }
 }
