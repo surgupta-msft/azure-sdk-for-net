@@ -38,6 +38,11 @@
         "TestTargetFramework": "net6.0"
       }
     },
+    "filters": {
+        "NoFooBar": {
+            "AdditionalTestFilters": "& TestCategory!=foobar"
+        }
+    },
     "AdditionalTestArguments": [
         "/p:UseProjectReferenceToAzureClients=false",
         "/p:UseProjectReferenceToAzureClients=true"
