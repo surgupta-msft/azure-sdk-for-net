@@ -108,6 +108,7 @@ namespace Microsoft.Azure.WebJobs.Extensions.Storage.Blobs.Config
 
             rule.BindToInput<MultiBlobContext>(this); // Intermediate private context to capture state
             rule.AddOpenConverter<MultiBlobContext, IEnumerable<BlobCollectionType>>(typeof(BlobCollectionConverter<>), this);
+            rule.AddOpenConverter<MultiBlobContext, BlobCollectionType[]>(typeof(BlobCollectionArrayConverter<>), this);
 
             rule.BindToInput<ParameterBindingData>((attr) => ConvertToParameterBindingData(attr)); // Precedence, must beat BindToStream
 
@@ -279,6 +280,82 @@ namespace Microsoft.Azure.WebJobs.Extensions.Storage.Blobs.Config
             {
                 bool match = _types.Contains(type);
                 return match;
+            }
+        }
+
+        // Converter to produce an Array<T> for binding to multiple blobs.
+        // T must have been matched by MultiBlobType
+        private class BlobCollectionArrayConverter<T> : IAsyncConverter<MultiBlobContext, T[]>
+        {
+            private readonly FuncAsyncConverter<BlobBaseClient, T> _converter;
+
+            public BlobCollectionArrayConverter(BlobsExtensionConfigProvider parent)
+            {
+                IConverterManager cm = parent._converterManager;
+                _converter = cm.GetConverter<BlobBaseClient, T, BlobAttribute>();
+                if (_converter == null)
+                {
+                    throw new InvalidOperationException($"Can't convert blob to {typeof(T).FullName}.");
+                }
+            }
+
+            public async Task<T[]> ConvertAsync(MultiBlobContext context, CancellationToken cancellationToken)
+            {
+                // Query the blob container using the blob prefix (if specified)
+                // Note that we're explicitly using useFlatBlobListing=true to collapse
+                // sub directories.
+                string prefix = context.Prefix;
+                var container = context.Container;
+                IAsyncEnumerable<BlobItem> blobItems = container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken);
+
+                // create an IEnumerable<T> of the correct type, performing any required conversions on the blobs
+                var list = await ConvertBlobs(blobItems, container).ConfigureAwait(false);
+                return list;
+            }
+
+            private async Task<T[]> ConvertBlobs(IAsyncEnumerable<BlobItem> blobItems, BlobContainerClient blobContainerClient)
+            {
+                var list = new List<T>();
+
+                await foreach (var blobItem in blobItems.ConfigureAwait(false))
+                {
+                    BlobBaseClient src = null;
+                    switch (blobItem.Properties.BlobType)
+                    {
+                        case BlobType.Block:
+                            if (typeof(T) == typeof(ParameterBindingData))
+                            {
+                                src = blobContainerClient.GetBlobClient(blobItem.Name);
+                            }
+                            if (typeof(T) == typeof(BlobClient))
+                            {
+                                // BlobClient is simplified version of BlockBlobClient, i.e. upload results in creation of block blob.
+                                src = blobContainerClient.GetBlobClient(blobItem.Name);
+                            }
+                            else
+                            {
+                                src = blobContainerClient.GetBlockBlobClient(blobItem.Name);
+                            }
+                            break;
+                        case BlobType.Append:
+                            src = blobContainerClient.GetAppendBlobClient(blobItem.Name);
+                            break;
+                        case BlobType.Page:
+                            src = blobContainerClient.GetPageBlobClient(blobItem.Name);
+                            break;
+                        default:
+                            throw new InvalidOperationException($"Unexpected blob type {blobItem.Properties.BlobType}");
+                    }
+
+                    var funcCtx = new FunctionBindingContext(Guid.Empty, CancellationToken.None);
+                    var valueCtx = new ValueBindingContext(funcCtx, CancellationToken.None);
+
+                    var converted = await _converter(src, null, valueCtx).ConfigureAwait(false);
+
+                    list.Add(converted);
+                }
+
+                return list.ToArray();
             }
         }
 
